@@ -221,3 +221,24 @@ fn test_label_after_changed_equation_stays_on_equation() {
     assert!(output.contains("#diff-added[$ x = 2 $ <eq-main>]"));
     assert!(!output.contains("\n<eq-main>\n"));
 }
+
+#[test]
+fn test_changed_code_is_visible() {
+    let old = "#let x = 1\n\n#figure(table(columns: 2, [a], [b]), caption: [Old]) <tab>\n\nValue #x, see @tab.\n";
+    let new = "#let x = 2\n\n#figure(table(columns: 2, [a], [c]), caption: [New]) <tab>\n\nValue #x, see @tab.\n";
+    let output = run_diff(old, new);
+
+    // Commented out, the old code was invisible in the PDF.
+    assert!(!output.contains("// #"));
+    assert!(output.contains("#diff-deleted[#raw(block: true, \"#let x = 1\")]"));
+    assert!(output.contains(
+        "#diff-deleted[#raw(block: true, \"#figure(table(columns: 2, [a], [b]), caption: [Old])\")]"
+    ));
+    // The new binding still runs, unscoped, and its source is marked as added.
+    assert!(output.contains("#let x = 2\n#diff-added[#raw(block: true, \"#let x = 2\")]"));
+    // The new figure is marked, with its label inside the wrapper so that
+    // `@tab` still resolves.
+    assert!(
+        output.contains("#diff-added[#figure(table(columns: 2, [a], [c]), caption: [New]) <tab>]")
+    );
+}

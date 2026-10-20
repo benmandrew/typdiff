@@ -26,19 +26,16 @@ pub fn render(results: &[DiffResult]) -> String {
                 out.push('\n');
             }
             // A label after the wrapper would label the styled wrapper, which
-            // cannot be referenced. Keep it inside, next to the equation.
-            DiffResult::Added(Block::Equation { content, .. })
-                if results
-                    .peek()
-                    .is_some_and(|next| next_label(next).is_some()) =>
+            // cannot be referenced. Keep it inside, next to the equation or call.
+            DiffResult::Added(block)
+                if added_body(block).is_some()
+                    && results
+                        .peek()
+                        .is_some_and(|next| next_label(next).is_some()) =>
             {
+                let body = added_body(block).unwrap();
                 let label = results.next().and_then(next_label).unwrap();
-                write!(
-                    out,
-                    "#diff-added[{} {label}]",
-                    escape_content(content, false)
-                )
-                .unwrap();
+                write!(out, "#diff-added[{body} {label}]").unwrap();
                 out.push('\n');
             }
             DiffResult::Added(block) => {
@@ -112,6 +109,16 @@ fn is_label_only(text: &str) -> bool {
     TypstLabel::is_only(text)
 }
 
+/// The text an added equation or content call is wrapped around, or None
+/// for blocks that are not wrapped that way.
+fn added_body(block: &Block) -> Option<String> {
+    match block {
+        Block::Equation { content, .. } => Some(escape_content(content, false)),
+        Block::FuncCall { content } if !is_statement(content) => Some(content.clone()),
+        _ => None,
+    }
+}
+
 /// Returns the label if this result is a label that will be output bare.
 fn next_label(result: &DiffResult) -> Option<&str> {
     match result {
@@ -176,24 +183,57 @@ fn render_added_or_deleted(block: &Block, tag: DiffTag, out: &mut String) {
             write!(out, "#{}[{}]", func, escape_content(content, escape_refs)).unwrap();
         }
         // FuncCall represents code-mode expressions (#import, #show, etc.).
-        // Wrapping them in a content block would change their semantics,
-        // so we output added code as-is and deleted code as comments.
+        // Wrapping a statement in a content block would scope it, so an added
+        // statement runs as-is and its source is shown after it. Other added
+        // code is wrapped like any content. Deleted code must not run, so it
+        // is shown as struck source text.
         Block::FuncCall { content } => {
             if tag == DiffTag::Added {
+                if !is_statement(content) {
+                    write!(out, "#{func}[{content}]").unwrap();
+                    return;
+                }
                 out.push_str(content);
-            } else {
-                for line in content.lines() {
-                    write!(out, "// {line}").unwrap();
-                    out.push('\n');
-                }
-                // Remove the trailing newline since the caller adds one.
-                if out.ends_with('\n') {
-                    out.pop();
-                }
+                out.push('\n');
             }
+            write!(
+                out,
+                "#{}[#raw(block: true, {})]",
+                func,
+                string_literal(content)
+            )
+            .unwrap();
         }
         Block::Parbreak => {} // paragraph breaks have no visual content to mark
     }
+}
+
+/// True for code that binds or styles rather than producing content:
+/// `#let`, `#set`, `#show` and `#import`.
+fn is_statement(code: &str) -> bool {
+    let keyword: String = code
+        .trim_start_matches('#')
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    matches!(keyword.as_str(), "let" | "set" | "show" | "import")
+}
+
+/// Quote `s` as a Typst string literal.
+fn string_literal(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 2);
+    result.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            _ => result.push(ch),
+        }
+    }
+    result.push('"');
+    result
 }
 
 /// Render a modified block with per-span diff markup.
